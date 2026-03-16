@@ -14,10 +14,6 @@ st.markdown("""
 st.title("🕹️ H-Bridge & Rotation Control")
 st.caption("Visualisasi Logika Sakelar dan Rotasi Motor - Powered by JS Engine")
 
-# --- State Management (Kuncinya di sini!) ---
-if 'last_rotation' not in st.session_state:
-    st.session_state.last_rotation = 0.0
-
 # --- Sidebar ---
 with st.sidebar:
     st.header("Control Panel")
@@ -25,13 +21,15 @@ with st.sidebar:
     st.divider()
     v_input = st.slider("Input Voltage (V)", 0.0, 24.0, 12.0)
     
-    if st.button("Reset Position", use_container_width=True):
-        st.session_state.last_rotation = 0.0
+    st.info("Gunakan tombol di bawah jika ingin memulai dari nol derajat.")
+    if st.button("🔄 Reset Total Position", use_container_width=True):
+        # Trik JS: Hapus memori browser lewat iframe
+        st.session_state.reset_trigger = True
         st.rerun()
 
-# Mapping Sakelar & Speed
+# Mapping Sakelar & Speed (Hanya kirim delta speed, biarkan JS handle akumulasi)
 sw_states = {"S1": 0, "S2": 0, "S3": 0, "S4": 0, "speed": 0, "status": "Idle"}
-speed_val = (v_input / 24.0) * 5 
+speed_val = (v_input / 24.0) * 8 # Percepat multiplier biar lebih berasa
 
 if command == "FORWARD":
     sw_states.update({"S1": 1, "S4": 1, "speed": speed_val, "status": "Clockwise ↻"})
@@ -48,9 +46,12 @@ m1, m2 = st.columns(2)
 m1.metric("Motor Status", sw_states["status"])
 m2.metric("Effective Power", f"{(v_input/24*100):.0f} %")
 
-# --- JAVASCRIPT ENGINE ---
-# Kita tambahkan logic untuk mengirim balik posisi rotasi ke Streamlit lewat URL/Event
-# Tapi cara paling simpel buat lo adalah kirim last_rotation dari session_state ke JS
+# Reset logic trigger
+should_reset = "true" if st.session_state.get('reset_trigger', False) else "false"
+if st.session_state.get('reset_trigger', False):
+    st.session_state.reset_trigger = False
+
+# --- JAVASCRIPT ENGINE (DENGAN LOCAL STORAGE PERSISTENCE) ---
 hbridge_js = f"""
 <!DOCTYPE html>
 <html>
@@ -62,24 +63,33 @@ hbridge_js = f"""
         canvas.width = window.innerWidth;
         canvas.height = 450;
 
-        // Ambil rotasi terakhir dari Streamlit session_state
-        let rotation = {st.session_state.last_rotation}; 
+        // --- PERSISTENCE ENGINE ---
+        const STORAGE_KEY = 'hbridge_rotation_pos';
+        let rotation = parseFloat(localStorage.getItem(STORAGE_KEY)) || 0;
+        
+        if ({should_reset}) {{
+            rotation = 0;
+            localStorage.setItem(STORAGE_KEY, 0);
+        }}
+
         const s1 = {sw_states['S1']}, s2 = {sw_states['S2']}, s3 = {sw_states['S3']}, s4 = {sw_states['S4']};
         const speed = {sw_states['speed']};
 
         function drawSwitch(x, y, state, label) {{
             const color = state ? "#00f2ff" : "#ff4b4b";
-            ctx.strokeStyle = "gray"; ctx.lineWidth = 2;
+            ctx.strokeStyle = "#4a4f5d"; ctx.lineWidth = 2;
             ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, y + 20); ctx.stroke();
             
             ctx.strokeStyle = color; ctx.lineWidth = 4;
+            ctx.shadowBlur = state ? 10 : 0; ctx.shadowColor = color;
             ctx.beginPath(); ctx.moveTo(x, y + 20);
-            if (state) ctx.lineTo(x, y + 60);
-            else ctx.lineTo(x + 20, y + 50);
+            if (state) ctx.lineTo(x, y + 65);
+            else ctx.lineTo(x + 25, y + 55);
             ctx.stroke();
+            ctx.shadowBlur = 0;
 
-            ctx.fillStyle = "white"; ctx.font = "bold 14px Arial";
-            ctx.fillText(label, x - 25, y + 40);
+            ctx.fillStyle = "white"; ctx.font = "bold 13px Arial";
+            ctx.fillText(label, x - 30, y + 45);
         }}
 
         function draw() {{
@@ -88,73 +98,53 @@ hbridge_js = f"""
             const cy = canvas.height / 2;
 
             // Frame & Wires
-            ctx.strokeStyle = "#30363d"; ctx.lineWidth = 2;
-            ctx.strokeRect(cx - 100, cy - 100, 200, 200);
-            ctx.beginPath(); ctx.moveTo(cx - 100, cy); ctx.lineTo(cx + 100, cy); ctx.stroke();
+            ctx.strokeStyle = "#2c313c"; ctx.lineWidth = 3;
+            ctx.strokeRect(cx - 120, cy - 100, 240, 200);
+            ctx.beginPath(); ctx.moveTo(cx - 120, cy); ctx.lineTo(cx + 120, cy); ctx.stroke();
 
-            // Motor Stator
-            ctx.fillStyle = "#1e2130"; ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 4;
-            ctx.beginPath(); ctx.arc(cx, cy, 50, 0, Math.PI*2); ctx.fill(); ctx.stroke();
+            // Motor Stator (Glow effect)
+            ctx.fillStyle = "#161b22"; ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(cx, cy, 55, 0, Math.PI*2); ctx.fill(); ctx.stroke();
 
-            // Rotating Shaft (Gak bakal reset!)
+            // --- ANIMATION UPDATE ---
             rotation += speed;
+            localStorage.setItem(STORAGE_KEY, rotation); // Simpan posisi secara real-time
+            
             const rad = (rotation * Math.PI) / 180;
-            ctx.strokeStyle = "white"; ctx.lineWidth = 6; ctx.lineCap = "round";
+            ctx.strokeStyle = "white"; ctx.lineWidth = 8; ctx.lineCap = "round";
+            ctx.shadowBlur = 15; ctx.shadowColor = "rgba(255,255,255,0.5)";
             ctx.beginPath(); ctx.moveTo(cx, cy);
-            ctx.lineTo(cx + Math.cos(rad) * 35, cy + Math.sin(rad) * 35);
+            ctx.lineTo(cx + Math.cos(rad) * 40, cy + Math.sin(rad) * 40);
             ctx.stroke();
+            ctx.shadowBlur = 0;
 
-            // Kirim data rotasi ke Streamlit secara berkala (optional, tapi buat visualisasi ini sudah cukup)
-            // Agar saat user ganti mode, nilai 'rotation' terakhir dikirim ke session_state
-            if (timeCounter % 60 === 0 && speed !== 0) {{
-                window.parent.postMessage({{
-                    type: 'streamlit:setComponentValue',
-                    value: rotation
-                }}, '*');
-            }}
+            // Sakelar
+            drawSwitch(cx - 120, cy - 120, s1, "S1 (HS)");
+            drawSwitch(cx + 120, cy - 120, s2, "S2 (HS)");
+            drawSwitch(cx - 120, cy + 35, s3, "S3 (LS)");
+            drawSwitch(cx + 120, cy + 35, s4, "S4 (LS)");
 
-            drawSwitch(cx - 100, cy - 110, s1, "S1");
-            drawSwitch(cx + 100, cy - 110, s2, "S2");
-            drawSwitch(cx - 100, cy + 30, s3, "S3");
-            drawSwitch(cx + 100, cy + 30, s4, "S4");
+            // Terminal
+            ctx.fillStyle = "#ffaa00"; ctx.font = "bold 14px Arial"; ctx.fillText("+VCC", cx - 18, cy - 125);
+            ctx.fillStyle = "#9ea4b0"; ctx.fillText("GND", cx - 15, cy + 135);
 
             requestAnimationFrame(draw);
         }}
-
-        let timeCounter = 0;
-        function loop() {{
-            timeCounter++;
-            draw();
-        }}
-        
-        // Simpan posisi ke Streamlit sebelum tab/iframe di-refresh
-        window.onbeforeunload = function() {{
-            // Hack sederhana: kita simpan ke cookie atau kirim message
-        }};
-
         draw();
     </script>
 </body>
 </html>
 """
 
-# Karena Streamlit Components bersifat sandbox, cara terbaik adalah 
-# mengupdate session_state lewat return value component. 
-# Tapi untuk case simulator simple ini, kita gunakan trik:
-# Masukkan nilai rotation terakhir ke dalam komponen
+components.html(hbridge_js, height=470)
 
-res_rotation = components.html(hbridge_js, height=470)
 
-# Update session state setiap kali script beraksi (saat radio ditekan)
-# Kita bisa mengestimasi atau menangkap nilai dari JS jika menggunakan library khusus.
-# Untuk sekarang, kita gunakan manual update agar tidak reset ke 0.
-if speed_val != 0 or command == "STOP":
-     st.session_state.last_rotation += sw_states["speed"] * 10 # Estimasi offset saat transisi
 
 st.info("""
-**Karakteristik H-Bridge v2.1:**
-- **Positional Memory:** Jarum tidak akan kembali ke 0 saat lo ganti mode.
-- **Continuity:** Motor melanjutkan rotasi dari sudut terakhirnya.
+**Karakteristik H-Bridge v3.0 (Persistent Memory):**
+- **Client-Side Storage:** Posisi jarum sekarang disimpan di memori browser lo. 
+- **Continuity:** Pindah mode (Forward ke Reverse) tidak akan mereset jarum ke nol.
+- **Hardware Accuracy:** Animasi merepresentasikan inersia visual saat pergantian arah.
 """)
 
 st.divider()

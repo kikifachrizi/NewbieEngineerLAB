@@ -19,7 +19,7 @@ with st.sidebar:
     st.header("Encoder Config")
     ppr = st.slider("Pulses Per Revolution (PPR)", 5, 50, 20)
     mode = st.radio("Encoding Mode", ["X1", "X2", "X4"])
-    rpm = st.slider("Motor Speed (RPM)", -200, 200, 60)
+    rpm = st.slider("Motor Speed (RPM)", -50, 50, 60)
     st.divider()
     st.info(f"""
     **Mode Terpilih: {mode}**
