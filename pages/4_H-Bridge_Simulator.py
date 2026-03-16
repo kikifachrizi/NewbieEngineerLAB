@@ -36,7 +36,7 @@ else:
     speed = 0
 
 # --- Fragment for Animation ---
-@st.fragment(run_every=0.1)
+@st.fragment
 def motor_animation():
     # Update derajat rotasi (Mechanical Angle)
     st.session_state.m_rot = (st.session_state.m_rot - speed) % 360

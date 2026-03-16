@@ -19,7 +19,7 @@ if 'pwm_t' not in st.session_state:
     st.session_state.pwm_t = 0.0
 
 # --- Simulator Logic (Fragmented for Speed) ---
-@st.fragment(run_every=0.1)
+@st.fragment
 def run_pwm():
     st.session_state.pwm_t += 0.1
     t_now = st.session_state.pwm_t

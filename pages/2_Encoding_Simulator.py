@@ -21,7 +21,7 @@ if 'enc_angle' not in st.session_state:
     st.session_state.enc_angle = 0.0
 
 # --- Simulator Logic (Fragmented) ---
-@st.fragment(run_every=0.1)
+@st.fragment
 def run_encoder():
     dt = 0.1
     deg_per_sec = (rpm * 360) / 60

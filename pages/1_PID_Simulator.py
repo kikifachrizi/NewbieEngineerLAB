@@ -86,7 +86,7 @@ def calculate_metrics(time_arr, res_arr, sp):
     return pk, rt, st_t, err
 
 # --- Main Simulation (Fragmented for Speed) ---
-@st.fragment(run_every=0.1)
+@st.fragment
 def run_tuner_dashboard():
     dt = 0.1
     

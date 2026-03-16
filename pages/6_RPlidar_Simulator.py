@@ -118,8 +118,8 @@ lidar_js = f"""
             for (let i = 0; i < 360; i += 2) {{ // Resolusi 2 derajat
                 let a = robot.angle + (i * Math.PI / 180);
                 let d = getDistance(robot.x, robot.y, a);
-                ctx.strokeStyle = d < 400 ? `rgba(0, 242, 255, ${laser_intensity})` : 'rgba(0, 242, 255, 0.05)';
-                ctx.lineWidth = 1;
+                ctx.strokeStyle = d < 400 ? `rgba(0, 242, 255, ${laser_intensity * 1.5})` : 'rgba(0, 242, 255, 0.15)';
+                ctx.lineWidth = 2;
                 ctx.beginPath(); 
                 ctx.moveTo(robot.x, robot.y);
                 ctx.lineTo(robot.x + Math.cos(a) * d, robot.y + Math.sin(a) * d); 
