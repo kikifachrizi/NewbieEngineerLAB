@@ -1,99 +1,132 @@
 import streamlit as st
-import plotly.graph_objects as go
-import numpy as np
+import streamlit.components.v1 as components
 
 # --- Konfigurasi Page ---
-st.set_page_config(page_title="Forgix Encoding Simulator", layout="wide")
+st.set_page_config(page_title="Encoding Simulator", layout="wide")
+
+st.markdown("""
+    <style>
+        .stApp { background-color: #0b0e14; }
+        iframe { border-radius: 15px; border: 1px solid #1e2130; }
+    </style>
+""", unsafe_allow_html=True)
 
 st.title("📇 Quadrature Encoding (X1, X2, X4)")
-st.caption("Konsep pembacaan posisi melalui pulsa Channel A & B - Optimized with Plotly")
+st.caption("High-Speed Interactive Encoder Simulator - Powered by JavaScript Engine")
 
 # --- Sidebar Control ---
 with st.sidebar:
     st.header("Encoder Config")
     ppr = st.slider("Pulses Per Revolution (PPR)", 5, 50, 20)
     mode = st.radio("Encoding Mode", ["X1", "X2", "X4"])
-    rpm = st.slider("Motor Speed (RPM)", -100, 100, 30)
-    st.info("Garis vertikal menunjukkan 'sampling' titik baca sesuai mode.")
+    rpm = st.slider("Motor Speed (RPM)", -200, 200, 60)
+    st.divider()
+    st.info("""
+    **Prinsip Kerja:**
+    - **X1:** Hitung saat Channel A naik (Rising Edge).
+    - **X2:** Hitung saat Channel A naik & turun.
+    - **X4:** Hitung setiap perubahan di A & B.
+    """)
 
-# --- State Management ---
-if 'enc_angle' not in st.session_state:
-    st.session_state.enc_angle = 0.0
+# --- JAVASCRIPT ENGINE (HTML5 CANVAS) ---
+encoder_js = f"""
+<!DOCTYPE html>
+<html>
+<body style="margin: 0; background-color: #0b0e14; overflow: hidden; color: white; font-family: sans-serif;">
+    <canvas id="encCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('encCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = 500;
 
-# --- Simulator Logic (Fragmented) ---
-@st.fragment
-def run_encoder():
-    dt = 0.1
-    deg_per_sec = (rpm * 360) / 60
-    st.session_state.enc_angle += deg_per_sec * dt
-    
-    t_now = st.session_state.enc_angle
-    t_range = np.linspace(t_now - 90, t_now, 400) 
-    period_m = 360 / ppr
+        let angle = 0;
+        let lastTime = 0;
+        const ppr = {ppr};
+        const mode = "{mode}";
+        let rpm = {rpm};
 
-    # Vectorized Signal Calculation (Dihitung massal pake Numpy, jauh lebih ringan)
-    def get_signals_array(angles, period):
-        a = np.where((angles % period) < (period / 2), 1, 0)
-        b = np.where(((angles + period/4) % period) < (period / 2), 1, 0)
-        return a, b
+        function draw(timestamp) {{
+            const dt = (timestamp - lastTime) / 1000;
+            lastTime = timestamp;
+            if (!dt) {{ requestAnimationFrame(draw); return; }}
 
-    sig_a, sig_b = get_signals_array(t_range, period_m)
-    current_a, current_b = np.where((t_now % period_m) < (period_m / 2), 1, 0), np.where(((t_now + period_m/4) % period_m) < (period_m / 2), 1, 0)
+            // Update Angle
+            angle += (rpm * 360 / 60) * dt;
+            
+            // Clear Canvas
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-    # Logic Counting
-    if mode == "X1": pulses = int((st.session_state.enc_angle / 360) * ppr)
-    elif mode == "X2": pulses = int((st.session_state.enc_angle / 360) * ppr * 2)
-    elif mode == "X4": pulses = int((st.session_state.enc_angle / 360) * ppr * 4)
+            const period = 360 / ppr;
+            const viewWidth = 180; // Derajat yang tampil di layar
+            const scale = canvas.width / viewWidth;
 
-    # Metrics Layout
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Mechanical Angle", f"{int(st.session_state.enc_angle % 360)}°")
-    c2.metric(f"Total Counts ({mode})", pulses)
-    c3.metric("Current State (A, B)", f"({int(current_a)}, {int(current_b)})")
+            // Draw Grid
+            ctx.strokeStyle = '#1e2130';
+            ctx.lineWidth = 1;
+            for(let i=0; i<canvas.width; i+=50) {{
+                ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
+            }}
 
-    # --- Plotting with Plotly ---
-    fig = go.Figure()
-    
-    # Channel A
-    fig.add_trace(go.Scatter(
-        x=t_range, y=sig_a, 
-        name="Channel A", 
-        line_shape='hv', 
-        line=dict(color='#00f2ff', width=2)
-    ))
-    
-    # Channel B (Offset y axis for visibility)
-    fig.add_trace(go.Scatter(
-        x=t_range, y=sig_b - 1.5, 
-        name="Channel B", 
-        line_shape='hv', 
-        line=dict(color='#ff00ff', width=2)
-    ))
-    
-    # Vertikal Sampling Markers
-    mid_t = t_now - 45 
-    fig.add_vline(x=mid_t, line_width=2, line_dash="dash", line_color="white") 
-    
-    if mode in ["X2", "X4"]:
-        fig.add_vline(x=mid_t + period_m/2, line_width=1.5, line_dash="dot", line_color="rgba(255,255,255,0.5)")
-        
-    if mode == "X4":
-        fig.add_vline(x=mid_t + period_m/4, line_width=1, line_dash="dot", line_color="rgba(255,255,255,0.3)")
-        fig.add_vline(x=mid_t + 3*period_m/4, line_width=1, line_dash="dot", line_color="rgba(255,255,255,0.3)")
+            // Calculate pulses
+            let totalPulses = 0;
+            if (mode === "X1") totalPulses = Math.floor((angle / 360) * ppr);
+            else if (mode === "X2") totalPulses = Math.floor((angle / 360) * ppr * 2);
+            else if (mode === "X4") totalPulses = Math.floor((angle / 360) * ppr * 4);
 
-    fig.update_layout(
-        template="plotly_dark", 
-        height=400, 
-        showlegend=True,
-        xaxis=dict(title="Encoder Angle Position", range=[t_now-90, t_now], showgrid=False),
-        yaxis=dict(visible=False), 
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor="rgba(0,0,0,0)",
-        paper_bgcolor="rgba(0,0,0,0)"
-    )
-    
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+            // Draw Channel A & B
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.strokeStyle = '#00f2ff'; // Channel A (Cyan)
+            
+            for (let x = 0; x < canvas.width; x++) {{
+                const worldAngle = angle - (canvas.width - x) / scale;
+                const val = (worldAngle % period + period) % period < period / 2 ? 1 : 0;
+                const y = 150 - val * 60;
+                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }}
+            ctx.stroke();
 
-run_encoder()
+            ctx.beginPath();
+            ctx.strokeStyle = '#ff00ff'; // Channel B (Magenta)
+            for (let x = 0; x < canvas.width; x++) {{
+                const worldAngle = angle - (canvas.width - x) / scale;
+                const val = ((worldAngle + period/4) % period + period) % period < period / 2 ? 1 : 0;
+                const y = 300 - val * 60;
+                if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+            }}
+            ctx.stroke();
+
+            // Draw Sampling Markers (Vertical Line)
+            ctx.setLineDash([5, 5]);
+            ctx.strokeStyle = 'white';
+            ctx.lineWidth = 2;
+            const markerX = canvas.width - 20; // Garis di ujung kanan
+            ctx.beginPath(); ctx.moveTo(markerX, 50); ctx.lineTo(markerX, 350); ctx.stroke();
+            ctx.setLineDash([]);
+
+            // Text Info
+            ctx.fillStyle = "white";
+            ctx.font = "bold 20px sans-serif";
+            ctx.fillText("Channel A", 20, 80);
+            ctx.fillText("Channel B", 20, 230);
+            
+            ctx.fillStyle = "#00f2ff";
+            ctx.font = "30px monospace";
+            ctx.fillText(`Counts: ${{totalPulses}}`, 20, 400);
+            ctx.fillText(`Angle: ${{Math.floor(angle % 360)}}°`, 20, 440);
+
+            requestAnimationFrame(draw);
+        }}
+        requestAnimationFrame(draw);
+    </script>
+</body>
+</html>
+"""
+
+components.html(encoder_js, height=520)
+
+
+
 st.divider()
-st.caption("© 2026 Newbie Engineer Lab")
+st.caption("© 2026 Newbie Engineer Lab | High-Speed JS Encoder Engine")

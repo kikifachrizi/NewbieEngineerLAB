@@ -1,7 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
-import time
 
 # --- Konfigurasi Page ---
 st.set_page_config(page_title="Kinematics Lab | Newbie Engineer", layout="wide")
@@ -16,7 +15,6 @@ st.markdown("""
 
 st.title("⚙️ Differential Drive Kinematics")
 
-# --- SIDEBAR ---
 with st.sidebar:
     st.header("🤖 Robot Geometry")
     L = st.number_input("Wheel Separation (L) [m]", value=0.30, step=0.01)
@@ -47,76 +45,70 @@ c1.metric("Right Wheel (ω_r)", f"{vr:.2f} rad/s")
 c2.metric("Left Wheel (ω_l)", f"{vl:.2f} rad/s")
 c3.metric("L / 2", f"{L/2:.3f} m")
 
-# --- Visualization Function (Plotly Based) ---
-def create_robot_plot(x, y, theta, path_x=None, path_y=None):
-    fig = go.Figure()
-
-    # Draw Path
-    if path_x and len(path_x) > 1:
-        fig.add_trace(go.Scatter(x=path_x, y=path_y, mode='lines', 
-                                line=dict(color='#00f2ff', width=2, dash='dot'), 
-                                name="Path Trace"))
-
-    # Draw Robot Body (Circle)
-    # Kita buat koordinat lingkaran manual untuk Plotly Scatter
-    angles = np.linspace(0, 2*np.pi, 50)
-    circle_x = x + (L/2) * np.cos(angles)
-    circle_y = y + (L/2) * np.sin(angles)
+# --- Animation Engine ---
+def run_kinematics_animation():
+    # Pre-calculate all frames
+    dt = 0.1
+    t_steps = np.arange(0, sim_duration, dt)
     
-    fig.add_trace(go.Scatter(x=circle_x, y=circle_y, fill="toself", 
-                            fillcolor="white", line=dict(color="#9ea4b0"), 
-                            name="Robot Body", hoverinfo='skip'))
+    x_path, y_path, th_path = [0.0], [0.0], [0.0]
+    curr_x, curr_y, curr_th = 0.0, 0.0, 0.0
 
-    # Draw Heading Arrow
-    arrow_len = 0.4
-    fig.add_annotation(
-        x=x + arrow_len * np.cos(theta), y=y + arrow_len * np.sin(theta),
-        ax=x, ay=y, xref="x", yref="y", axref="x", ayref="y",
-        text="", showarrow=True, arrowhead=3, arrowsize=1, arrowwidth=3, arrowcolor="#ff4444"
+    for _ in t_steps:
+        curr_x += v_lin * np.cos(curr_th) * dt
+        curr_y += v_lin * np.sin(curr_th) * dt
+        curr_th += w_ang * dt
+        x_path.append(curr_x)
+        y_path.append(curr_y)
+        th_path.append(curr_th)
+
+    # Base Figure
+    fig = go.Figure(
+        data=[
+            # Path Trace
+            go.Scatter(x=x_path, y=y_path, mode="lines", line=dict(color="#00f2ff", width=2, dash="dot"), name="Path"),
+            # Robot Body (Initial)
+            go.Scatter(x=[], y=[], fill="toself", fillcolor="rgba(255,255,255,0.8)", line=dict(color="cyan"), name="Robot")
+        ],
+        layout=go.Layout(
+            template="plotly_dark",
+            xaxis=dict(range=[-4, 4], autorange=False, gridcolor="#30363d"),
+            yaxis=dict(range=[-4, 4], autorange=False, gridcolor="#30363d", scaleanchor="x", scaleratio=1),
+            updatemenus=[dict(type="buttons", buttons=[dict(label="Play Animation", method="animate", args=[None, {"frame": {"duration": 50, "redraw": True}, "fromcurrent": True}])])],
+        ),
+        frames=[
+            go.Frame(
+                data=[
+                    go.Scatter(x=x_path[:i], y=y_path[:i]), # Update Path
+                    go.Scatter( # Update Robot Circle
+                        x=x_path[i] + (L/2) * np.cos(np.linspace(0, 2*np.pi, 30)),
+                        y=y_path[i] + (L/2) * np.sin(np.linspace(0, 2*np.pi, 30))
+                    )
+                ]
+            ) for i in range(len(x_path))
+        ]
     )
-
-    fig.update_layout(
-        template="plotly_dark", height=600, width=700,
-        xaxis=dict(range=[-4, 4], showgrid=True, gridcolor="#30363d", zeroline=False),
-        yaxis=dict(range=[-4, 4], showgrid=True, gridcolor="#30363d", zeroline=False, scaleanchor="x", scaleratio=1),
-        margin=dict(l=20, r=20, t=40, b=20),
-        title=dict(text=f"Pose: x={x:.2f}, y={y:.2f}, θ={np.degrees(theta):.1f}°", font=dict(color="#00f2ff")),
-        showlegend=False,
-        plot_bgcolor="#0b0e14", paper_bgcolor="#0b0e14"
-    )
-    return fig
-
-# --- Control Logic ---
-plot_holder = st.empty()
-
-if set_pose:
-    fig = create_robot_plot(tx, ty, np.radians(tt))
-    plot_holder.plotly_chart(fig, use_container_width=True)
-
-elif run_sim:
-    curr_x, curr_y, curr_theta = 0.0, 0.0, 0.0
-    dt = 0.2 # Ditambah sedikit biar ga terlalu banyak render
-    px, py = [0.0], [0.0]
     
-    for t in np.arange(0, sim_duration, dt):
-        # Forward Kinematics (Odometry)
-        curr_x += v_lin * np.cos(curr_theta) * dt
-        curr_y += v_lin * np.sin(curr_theta) * dt
-        curr_theta += w_ang * dt
-        
-        px.append(curr_x)
-        py.append(curr_y)
-        
-        fig = create_robot_plot(curr_x, curr_y, curr_theta, px, py)
-        plot_holder.plotly_chart(fig, use_container_width=True)
-        # Menghapus time.sleep karena rendering cloud sudah memberikan delay alami
+    fig.update_layout(margin=dict(l=20, r=20, t=20, b=20), height=600)
+    st.plotly_chart(fig, use_container_width=True)
 
+# --- Logic Control ---
+if run_sim:
+    run_kinematics_animation()
+elif set_pose:
+    # Static Pose logic
+    ang = np.linspace(0, 2*np.pi, 30)
+    fig = go.Figure(data=[
+        go.Scatter(x=tx + (L/2) * np.cos(ang), y=ty + (L/2) * np.sin(ang), fill="toself", fillcolor="white"),
+        # Heading Arrow
+        go.Scatter(x=[tx, tx + 0.4*np.cos(np.radians(tt))], y=[ty, ty + 0.4*np.sin(np.radians(tt))], mode="lines+markers", line=dict(color="red", width=4))
+    ])
+    fig.update_layout(template="plotly_dark", xaxis=dict(range=[-4,4]), yaxis=dict(range=[-4,4], scaleanchor="x"), height=600)
+    st.plotly_chart(fig, use_container_width=True)
 else:
-    # Tampilan awal (Idle)
-    fig = create_robot_plot(0, 0, 0)
-    plot_holder.plotly_chart(fig, use_container_width=True)
+    st.info("Atur parameter di sidebar lalu klik Start Simulation untuk melihat pergerakan robot.")
 
 
 
 st.divider()
-st.caption("© 2026 Newbie Engineer Lab | Specialized for AMR TIFA R&D")
+st.caption("© 2026 Newbie Engineer Lab")
