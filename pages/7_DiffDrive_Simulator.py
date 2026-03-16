@@ -1,6 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
-import numpy as np # Pastikan numpy di-import
+import numpy as np
 
 # --- Konfigurasi Page ---
 st.set_page_config(page_title="Kinematics Lab | Newbie Engineer", layout="wide")
@@ -14,8 +14,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚙️ Differential Drive Kinematics v3.3")
-st.caption("High-Speed Kinetic Engine - Fixed Math Logic")
+st.title("⚙️ Differential Drive Kinematics v3.4")
+st.caption("Autonomous Go-to-Goal Controller - Path Planning & Execution")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -24,38 +24,33 @@ with st.sidebar:
     R = st.number_input("Wheel Radius (R) [m]", value=0.05, step=0.01)
     
     st.divider()
-    st.header("🕹️ Real-Time Velocity")
-    v_lin = st.slider("Linear Velocity (v) [m/s]", -1.0, 1.0, 0.4)
-    w_ang = st.slider("Angular Velocity (ω) [rad/s]", -2.0, 2.0, 0.5)
-    
-    st.divider()
     st.header("📍 Target Position")
-    tx = st.number_input("Target X", value=1.5)
+    tx = st.number_input("Target X", value=2.0)
     ty = st.number_input("Target Y", value=1.5)
-    tt = st.slider("Target Heading (°)", -180, 180, 45)
+    tt = st.slider("Target Heading (°)", -180, 180, 0)
     
     st.divider()
-    if st.button("🚀 Deploy to Target", use_container_width=True):
+    st.header("⚙️ Controller Gain")
+    k_v = st.slider("Linear Gain (Kp-v)", 0.1, 2.0, 0.5, help="Kecepatan maju robot")
+    k_w = st.slider("Angular Gain (Kp-w)", 0.5, 5.0, 2.0, help="Kecepatan belok robot")
+    
+    st.divider()
+    if st.button("🚀 DEPLOY TO TARGET", use_container_width=True):
         st.session_state.deploy_trigger = True
         st.rerun()
-    if st.button("🔄 Reset to Origin", use_container_width=True):
+    if st.button("🔄 RESET POSITION", use_container_width=True):
         st.session_state.deploy_trigger = False
         st.rerun()
 
-# --- Pre-calculate Radian di Python ---
-target_th_rad = np.radians(tt)
-
 # --- Metrics ---
-vr = (v_lin + (w_ang * L / 2)) / R
-vl = (v_lin - (w_ang * L / 2)) / R
 c1, c2, c3 = st.columns(3)
-c1.metric("Right Wheel", f"{vr:.2f} rad/s")
-c2.metric("Left Wheel", f"{vl:.2f} rad/s")
-c3.metric("Target", f"({tx}, {ty})")
+c1.metric("Status", "AUTONOMOUS" if st.session_state.get('deploy_trigger') else "IDLE")
+c2.metric("Target Coordinate", f"({tx}, {ty})")
+c3.metric("Goal Threshold", "0.05 m")
 
 is_deploy = "true" if st.session_state.get('deploy_trigger', False) else "false"
 
-# --- JAVASCRIPT KINEMATIC ENGINE ---
+# --- JAVASCRIPT KINEMATIC ENGINE (WITH GO-TO-GOAL LOGIC) ---
 kinematic_js = f"""
 <!DOCTYPE html>
 <html>
@@ -67,14 +62,18 @@ kinematic_js = f"""
         canvas.width = window.innerWidth;
         canvas.height = 600;
 
-        // Semua variabel sudah berupa angka mentah dari Python
-        const v = {v_lin}, w = {w_ang}, L = {L};
-        const targetX = {tx}, targetY = {ty}, targetTh = {target_th_rad};
+        // Controller Params
+        const kv = {k_v}, kw = {k_w}, L = {L};
+        const targetX = {tx}, targetY = {ty};
+        const targetTh = {np.radians(tt)};
         const isDeploy = {is_deploy};
         
         let x = 0, y = 0, theta = 0;
+        let v = 0, w = 0;
         let path = [];
         let lastTime = 0;
+        let reached = false;
+
         const scale = 80; 
         const offsetX = canvas.width / 2;
         const offsetY = canvas.height / 2;
@@ -94,9 +93,7 @@ kinematic_js = f"""
             ctx.strokeStyle = "rgba(255, 68, 68, 0.4)";
             ctx.setLineDash([5, 5]);
             ctx.beginPath(); ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(25,0); ctx.stroke();
             ctx.restore();
-            ctx.setLineDash([]);
         }}
 
         function drawRobot(rx, ry, rth) {{
@@ -120,8 +117,6 @@ kinematic_js = f"""
             ctx.beginPath(); ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
             ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 4;
             ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(35, 0); ctx.stroke();
-            ctx.fillStyle = "#ff4444";
-            ctx.beginPath(); ctx.moveTo(35, -5); ctx.lineTo(45, 0); ctx.lineTo(35, 5); ctx.fill();
             ctx.restore();
         }}
 
@@ -130,7 +125,29 @@ kinematic_js = f"""
             if(!lastTime) {{ lastTime = timestamp; requestAnimationFrame(update); return; }}
             lastTime = timestamp;
 
-            if (isDeploy) {{
+            if (isDeploy && !reached) {{
+                // --- GO TO GOAL LOGIC ---
+                let dx = targetX - x;
+                let dy = targetY - y;
+                let dist = Math.sqrt(dx*dx + dy*dy);
+                let angleToTarget = Math.atan2(dy, dx);
+                let alpha = angleToTarget - theta;
+
+                // Normalisasi sudut (-PI to PI)
+                while (alpha > Math.PI) alpha -= 2 * Math.PI;
+                while (alpha < -Math.PI) alpha += 2 * Math.PI;
+
+                if (dist > 0.05) {{
+                    v = kv * dist;
+                    w = kw * alpha;
+                    
+                    // Limit kecepatan biar gak gila
+                    v = Math.min(v, 1.0);
+                    w = Math.max(-2.0, Math.min(w, 2.0));
+                }} else {{
+                    v = 0; w = 0; reached = true;
+                }}
+
                 x += v * Math.cos(theta) * dt;
                 y += v * Math.sin(theta) * dt;
                 theta += w * dt;
@@ -141,6 +158,17 @@ kinematic_js = f"""
             drawGrid();
             drawGhost(targetX, targetY, targetTh);
             drawRobot(x, y, theta);
+            
+            // HUD Status
+            ctx.fillStyle = "white";
+            ctx.font = "14px monospace";
+            ctx.fillText("Linear Vel: " + v.toFixed(2) + " m/s", 20, 30);
+            ctx.fillText("Angular Vel: " + w.toFixed(2) + " rad/s", 20, 50);
+            if(reached) {{
+                ctx.fillStyle = "#00ff00";
+                ctx.fillText("STATUS: TARGET REACHED!", 20, 80);
+            }}
+
             requestAnimationFrame(update);
         }}
         requestAnimationFrame(update);
@@ -151,6 +179,8 @@ kinematic_js = f"""
 
 components.html(kinematic_js, height=620)
 
+
+
 st.divider()
-st.info("**Update v3.3:** Fixed Math Definition Error & Physics Sync.")
+st.info("**Update v3.4:** Implementasi Controller Go-to-Goal. Robot sekarang secara cerdas menghitung $v$ dan $\omega$ untuk mencapai target koordinat.")
 st.caption("© 2026 Newbie Engineer Lab")

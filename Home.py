@@ -84,7 +84,7 @@ st.markdown("""
 # --- HERO SECTION ---
 st.markdown(f"""
     <div class="hero-wrapper">
-        <div class="hero-badge">The Newbie Lab v3.3</div>
+        <div class="hero-badge">The Newbie Lab v3.4</div>
         <h1 class="hero-main-title">Build <span class="hero-highlight">Intelligence.</span><br>Beyond The Steel.</h1>
         <p class="hero-p">
             Selamat datang di <span class="hero-highlight">Newbie Engineer</span>. Lab ini adalah wadah gue berbagi ilmu dan simulasi teknologi robotika. 
