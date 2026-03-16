@@ -12,8 +12,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📟 Advanced PID Simulator v3.2")
-st.caption("Precision Auto-Scaling Engine - High Visibility Mode")
+st.title("📟 Advanced PID Simulator v3.3")
+st.caption("Precision Control System - Dynamic Time-Scale Engine")
 
 # --- Sidebar ---
 with st.sidebar:
@@ -22,6 +22,19 @@ with st.sidebar:
     ki = st.slider("Integral (Ki)", 0.0, 20.0, 2.0)
     kd = st.slider("Derivative (Kd)", 0.0, 10.0, 0.5)
     
+    st.divider()
+    st.header("⏱️ Time Control")
+    # Fitur Baru: Mengatur kecepatan simulasi
+    sim_speed = st.select_slider(
+        "Simulation Speed",
+        options=["0.25x", "0.5x", "1x", "2x", "4x"],
+        value="1x",
+        help="0.25x untuk analisa slow-motion, 4x untuk testing stabilitas cepat."
+    )
+    # Konversi string ke multiplier numerik
+    speed_map = {"0.25x": 0.004, "0.5x": 0.008, "1x": 0.016, "2x": 0.032, "4x": 0.064}
+    dt_val = speed_map[sim_speed]
+
     st.divider()
     st.header("🔄 Environment")
     mode = st.radio("System Mode", ["Manual Setpoint", "Oscillation Mode"])
@@ -52,6 +65,7 @@ pid_js = f"""
 
         const Kp = {kp}, Ki = {ki}, Kd = {kd};
         const noiseAmp = {noise_amp}, maxOut = {max_out}, mode = "{mode}";
+        const dt = {dt_val}; // Kecepatan simulasi dari Streamlit
         let target = {target_val};
 
         let currV = 0, errSum = 0, lastErr = 0;
@@ -59,7 +73,6 @@ pid_js = f"""
         let peakVal = 0, riseTime = 0, settlingTime = 0;
 
         function updatePID() {{
-            const dt = 0.016;
             if (mode === "Oscillation Mode") {{
                 oscTimer += dt;
                 if (oscTimer >= 4.0) {{
@@ -88,7 +101,7 @@ pid_js = f"""
             if(Math.abs(error) > Math.abs(target * 0.05)) settlingTime = time;
 
             history.push({{t: time, v: currV, sp: target}});
-            if (history.length > 400) history.shift();
+            if (history.length > 500) history.shift();
             time += dt;
 
             document.getElementById('m_peak').innerText = peakVal.toFixed(1);
@@ -102,25 +115,21 @@ pid_js = f"""
             const chartW = canvas.width - 120;
             const chartH = canvas.height - 140;
 
-            // --- SMART SCALING ENGINE ---
             const allValues = history.map(d => d.v).concat([target]);
             const minVal = Math.min(...allValues);
             const maxVal = Math.max(...allValues);
-            const range = Math.max(Math.abs(maxVal - minVal), 20); // Minimal range 20 unit
-            
-            const yMin = minVal - (range * 0.2); // Kasih nafas 20% di bawah
-            const yMax = maxVal + (range * 0.2); // Kasih nafas 20% di atas
+            const range = Math.max(Math.abs(maxVal - minVal), 20);
+            const yMin = minVal - (range * 0.2);
+            const yMax = maxVal + (range * 0.2);
             const yRange = yMax - yMin;
 
             function getY(val) {{
                 return (padding + chartH) - ((val - yMin) / yRange) * chartH;
             }}
 
-            // Draw Grid & Labels
-            ctx.strokeStyle = '#1e2130';
-            ctx.lineWidth = 1;
-            ctx.font = "12px monospace";
-            ctx.fillStyle = "#4a4f5d";
+            // Grid
+            ctx.strokeStyle = '#1e2130'; ctx.lineWidth = 1;
+            ctx.font = "12px monospace"; ctx.fillStyle = "#4a4f5d";
             for(let i=0; i<=5; i++) {{
                 let val = yMin + (yRange / 5) * i;
                 let y = getY(val);
@@ -128,37 +137,32 @@ pid_js = f"""
                 ctx.fillText(val.toFixed(0), padding - 45, y + 4);
             }}
 
-            // Setpoint Line
-            ctx.strokeStyle = '#ff4444';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([10, 10]);
+            // Target Line
+            ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.setLineDash([10, 10]);
             ctx.beginPath();
             history.forEach((d, i) => {{
-                let x = padding + (i / 400) * chartW;
+                let x = padding + (i / 500) * chartW;
                 let y = getY(d.sp);
                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }});
-            ctx.stroke();
-            ctx.setLineDash([]);
+            ctx.stroke(); ctx.setLineDash([]);
 
-            // System Output Line (Glow Cyan)
-            ctx.strokeStyle = '#00f2ff';
-            ctx.lineWidth = 4;
+            // Output Line
+            ctx.strokeStyle = '#00f2ff'; ctx.lineWidth = 4;
             ctx.shadowBlur = 15; ctx.shadowColor = '#00f2ff';
             ctx.beginPath();
             history.forEach((d, i) => {{
-                let x = padding + (i / 400) * chartW;
+                let x = padding + (i / 500) * chartW;
                 let y = getY(d.v);
                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }});
-            ctx.stroke();
-            ctx.shadowBlur = 0;
+            ctx.stroke(); ctx.shadowBlur = 0;
 
-            // Legend
+            // Labels
             ctx.fillStyle = "white"; ctx.font = "bold 15px sans-serif";
-            ctx.fillText("LIVE TELEMETRY", padding, 35);
-            ctx.fillStyle = "#ff4444"; ctx.fillText("● Target", padding + 160, 35);
-            ctx.fillStyle = "#00f2ff"; ctx.fillText("● Output", padding + 240, 35);
+            ctx.fillText("LIVE TELEMETRY (" + "{sim_speed}" + ")", padding, 35);
+            ctx.fillStyle = "#ff4444"; ctx.fillText("● Target", padding + 220, 35);
+            ctx.fillStyle = "#00f2ff"; ctx.fillText("● Output", padding + 300, 35);
         }}
 
         function loop() {{ updatePID(); draw(); requestAnimationFrame(loop); }}
@@ -170,11 +174,10 @@ pid_js = f"""
 
 components.html(pid_js, height=580)
 
-
 st.divider()
-st.info("""
-**Update v3.2:**
-- **Smart Zoom:** Skala Y sekarang menyesuaikan diri secara real-time terhadap `Min` dan `Max` data yang ada.
-- **Y-Axis Center:** Garis nol tidak lagi dipaksa di tengah jika tidak diperlukan, memberikan visibilitas maksimal pada respons transien.
+st.info(f"""
+**Info Simulasi:**
+- **Kecepatan:** Saat ini berjalan pada **{sim_speed}**. 
+- **Analisis:** Gunakan **0.25x** untuk melihat osilasi mikro atau **4x** untuk melihat respon sistem terhadap gangguan (*noise*) dalam jangka panjang secara cepat.
 """)
 st.caption("© 2026 Newbie Engineer Lab")

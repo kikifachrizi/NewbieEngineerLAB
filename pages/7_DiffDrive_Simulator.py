@@ -1,6 +1,5 @@
 import streamlit as st
-import plotly.graph_objects as go
-import numpy as np
+import streamlit.components.v1 as components
 
 # --- Konfigurasi Page ---
 st.set_page_config(page_title="Kinematics Lab | Newbie Engineer", layout="wide")
@@ -9,16 +8,14 @@ st.markdown("""
     <style>
         .stApp { background-color: #0b0e14; color: #ecf0f1; }
         [data-testid="stSidebar"] { background-color: #161b22; border-right: 1px solid #00f2ff33; }
-        .block-container { padding-top: 1rem; }
-        /* Style Metric agar lebih techy */
-        [data-testid="stMetricValue"] { font-family: 'Courier New', monospace; color: #00f2ff; }
+        iframe { border-radius: 15px; border: 1px solid #1e2130; background-color: #0b0e14; }
     </style>
 """, unsafe_allow_html=True)
 
 st.title("⚙️ Differential Drive Kinematics")
-st.caption("Live Interactive Simulation - Predict & Execute")
+st.caption("High-Speed Kinetic Engine - Real-Time Path Tracing")
 
-# --- SIDEBAR (INPUT) ---
+# --- SIDEBAR ---
 with st.sidebar:
     st.header("🤖 Robot Geometry")
     L = st.number_input("Wheel Separation (L) [m]", value=0.30, step=0.01)
@@ -28,103 +25,140 @@ with st.sidebar:
     st.header("🕹️ Real-Time Control")
     v_lin = st.slider("Linear Velocity (v) [m/s]", -1.0, 1.0, 0.4)
     w_ang = st.slider("Angular Velocity (ω) [rad/s]", -2.0, 2.0, 0.5)
-    sim_time = st.slider("Prediction Time (s)", 1, 10, 5)
     
     st.divider()
-    # Tombol Reset
-    if st.button("🔄 Reset to Origin", use_container_width=True):
+    if st.button("🔄 Reset Animation", use_container_width=True):
         st.rerun()
 
-# --- Kalkulasi Inverse Kinematics (Langsung Update) ---
+# --- Inverse Kinematics Calculation ---
 vr = (v_lin + (w_ang * L / 2)) / R
 vl = (v_lin - (w_ang * L / 2)) / R
 
 c1, c2, c3 = st.columns(3)
-c1.metric("Right Wheel (ω_r)", f"{vr:.2f} rad/s")
-c2.metric("Left Wheel (ω_l)", f"{vl:.2f} rad/s")
-c3.metric("ICR Radius", f"{(v_lin/w_ang):.2f} m" if w_ang != 0 else "∞")
+c1.metric("Right Wheel", f"{vr:.2f} rad/s")
+c2.metric("Left Wheel", f"{vl:.2f} rad/s")
+c3.metric("L/2 Radius", f"{L/2:.3f} m")
 
-# --- SIMULATION ENGINE (LIVE PREVIEW) ---
-@st.fragment
-def show_interactive_sim():
-    # 1. Hitung Path secara Real-time
-    dt = 0.05
-    t_steps = np.arange(0, sim_time, dt)
-    x_path, y_path, th_path = [0.0], [0.0], [0.0]
-    curr_x, curr_y, curr_th = 0.0, 0.0, 0.0
+# --- JAVASCRIPT KINEMATIC ENGINE ---
+kinematic_js = f"""
+<!DOCTYPE html>
+<html>
+<body style="margin: 0; background-color: #0b0e14; overflow: hidden; font-family: sans-serif;">
+    <canvas id="kinCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById('kinCanvas');
+        const ctx = canvas.getContext('2d');
+        canvas.width = window.innerWidth;
+        canvas.height = 600;
 
-    for _ in t_steps:
-        curr_x += v_lin * np.cos(curr_th) * dt
-        curr_y += v_lin * np.sin(curr_th) * dt
-        curr_th += w_ang * dt
-        x_path.append(curr_x)
-        y_path.append(curr_y)
-        th_path.append(curr_th)
+        // Params from Streamlit
+        const v = {v_lin};
+        const w = {w_ang};
+        const L = {L};
+        
+        // Robot State
+        let x = 0, y = 0, theta = 0;
+        let path = [];
+        let lastTime = 0;
 
-    # 2. Plotting (Plotly)
-    fig = go.Figure()
+        // Koordinat Konversi (Metre to Pixel)
+        const scale = 100; // 1 meter = 100 pixels
+        const offsetX = canvas.width / 2;
+        const offsetY = canvas.height / 2;
 
-    # Prediksi Jalur (Neon Cyan)
-    fig.add_trace(go.Scatter(
-        x=x_path, y=y_path, mode="lines",
-        line=dict(color="#00f2ff", width=3, dash="solid"),
-        name="Predicted Path",
-        hovertemplate="x: %{x:.2f}<br>y: %{y:.2f}<extra></extra>"
-    ))
+        function drawRobot(rx, ry, rth) {{
+            const px = offsetX + rx * scale;
+            const py = offsetY - ry * scale; // Y inverted in canvas
 
-    # Robot di Titik Awal (0,0)
-    ang = np.linspace(0, 2*np.pi, 30)
-    fig.add_trace(go.Scatter(
-        x=0 + (L/2) * np.cos(ang), y=0 + (L/2) * np.sin(ang),
-        fill="toself", fillcolor="rgba(255, 255, 255, 0.1)",
-        line=dict(color="gray", width=1),
-        name="Start Pos"
-    ))
+            // 1. Draw Path
+            ctx.strokeStyle = "#00f2ff";
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            path.forEach((p, i) => {{
+                let p_px = offsetX + p.x * scale;
+                let p_py = offsetY - p.y * scale;
+                if(i===0) ctx.moveTo(p_px, p_py); else ctx.lineTo(p_px, p_py);
+            }});
+            ctx.stroke();
+            ctx.setLineDash([]);
 
-    # Robot di Titik Akhir Prediksi (Current Pose)
-    end_x, end_y, end_th = x_path[-1], y_path[-1], th_path[-1]
-    
-    # Body
-    fig.add_trace(go.Scatter(
-        x=end_x + (L/2) * np.cos(ang), y=end_y + (L/2) * np.sin(ang),
-        fill="toself", fillcolor="rgba(0, 242, 255, 0.6)",
-        line=dict(color="white", width=2),
-        name="Robot Pose"
-    ))
+            // 2. Draw Robot Body
+            ctx.save();
+            ctx.translate(px, py);
+            ctx.rotate(-rth); // Rotate canvas (negative because Y is inverted)
+            
+            // Body Circle
+            ctx.fillStyle = "rgba(0, 242, 255, 0.2)";
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
 
-    # Heading Arrow (Penanda Arah Robot)
-    arrow_len = 0.4
-    fig.add_trace(go.Scatter(
-        x=[end_x, end_x + arrow_len * np.cos(end_th)],
-        y=[end_y, end_y + arrow_len * np.sin(end_th)],
-        mode="lines+markers",
-        line=dict(color="#ff4444", width=4),
-        marker=dict(size=[0, 10], symbol="arrow-bar-up", angleref="previous"),
-        name="Heading"
-    ))
+            // Heading Arrow
+            ctx.strokeStyle = "#ff4444";
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.moveTo(0, 0);
+            ctx.lineTo(25, 0); // Pointing to the right (local X)
+            ctx.stroke();
+            
+            // Arrow Head
+            ctx.fillStyle = "#ff4444";
+            ctx.beginPath();
+            ctx.moveTo(25, -5); ctx.lineTo(35, 0); ctx.lineTo(25, 5); ctx.fill();
 
-    fig.update_layout(
-        template="plotly_dark", height=700,
-        xaxis=dict(title="X Position (m)", range=[-3, 3], gridcolor="#1e2130", zeroline=True, zerolinecolor="#4a4f5d"),
-        yaxis=dict(title="Y Position (m)", range=[-3, 3], gridcolor="#1e2130", zeroline=True, zerolinecolor="#4a4f5d", scaleanchor="x", scaleratio=1),
-        margin=dict(l=20, r=20, t=20, b=20),
-        showlegend=True,
-        legend=dict(yanchor="top", y=0.99, xanchor="left", x=0.01),
-        plot_bgcolor="#0b0e14", paper_bgcolor="#0b0e14"
-    )
+            ctx.restore();
+        }}
 
-    st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
+        function update(timestamp) {{
+            const dt = (timestamp - lastTime) / 1000;
+            if(!lastTime) {{ lastTime = timestamp; requestAnimationFrame(update); return; }}
+            lastTime = timestamp;
 
-show_interactive_sim()
+            // --- KINEMATIC MODEL ---
+            x += v * Math.cos(theta) * dt;
+            y += v * Math.sin(theta) * dt;
+            theta += w * dt;
+
+            // Simpan jejak
+            path.push({{x: x, y: y}});
+            if(path.length > 1000) path.shift();
+
+            // Draw everything
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Draw Grid
+            ctx.strokeStyle = "#1e2130";
+            ctx.lineWidth = 1;
+            for(let i=0; i<canvas.width; i+=50) {{
+                ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke();
+            }}
+            for(let i=0; i<canvas.height; i+=50) {{
+                ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke();
+            }}
+
+            drawRobot(x, y, theta);
+            requestAnimationFrame(update);
+        }}
+
+        requestAnimationFrame(update);
+    </script>
+</body>
+</html>
+"""
+
+components.html(kinematic_js, height=620)
 
 
 
 st.divider()
 st.info("""
 **User Guide:**
-- Geser slider **v** dan **ω** di sidebar. Grafik akan langsung menampilkan prediksi pergerakan robot secara real-time.
-- **Garis Cyan:** Jalur yang akan ditempuh robot selama durasi waktu prediksi.
-- **Panah Merah:** Orientasi (*heading*) robot di akhir jalur.
-- Simulator ini menggunakan model **Forward Kinematics** untuk menghitung odometri.
+- Robot akan mulai berjalan secara otomatis dari titik **(0,0)**.
+- Ubah **v** (Linear) dan **ω** (Angular) di sidebar untuk melihat perubahan arah robot secara langsung.
+- Animasi ini berjalan di sisi browser (Client-side) untuk menjamin pergerakan **60 FPS** yang mulus.
 """)
-st.caption("© 2026 Newbie Engineer Lab")
+st.caption("© 2026 Newbie Engineer Lab | Specialized for AMR TIFA R&D")
