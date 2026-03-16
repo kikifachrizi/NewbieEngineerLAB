@@ -21,11 +21,11 @@ with st.sidebar:
     mode = st.radio("Encoding Mode", ["X1", "X2", "X4"])
     rpm = st.slider("Motor Speed (RPM)", -200, 200, 60)
     st.divider()
-    st.info("""
-    **Prinsip Kerja:**
-    - **X1:** Hitung saat Channel A naik (Rising Edge).
-    - **X2:** Hitung saat Channel A naik & turun.
-    - **X4:** Hitung setiap perubahan di A & B.
+    st.info(f"""
+    **Mode Terpilih: {mode}**
+    - **X1:** Sampling dilakukan hanya pada **Rising Edge Channel A**.
+    - **X2:** Sampling pada **Rising & Falling Edge Channel A**.
+    - **X4:** Sampling pada **Semua Edge (Rising/Falling)** di A & B.
     """)
 
 # --- JAVASCRIPT ENGINE (HTML5 CANVAS) ---
@@ -51,14 +51,11 @@ encoder_js = f"""
             lastTime = timestamp;
             if (!dt) {{ requestAnimationFrame(draw); return; }}
 
-            // Update Angle
             angle += (rpm * 360 / 60) * dt;
-            
-            // Clear Canvas
             ctx.clearRect(0, 0, canvas.width, canvas.height);
 
             const period = 360 / ppr;
-            const viewWidth = 180; // Derajat yang tampil di layar
+            const viewWidth = 180; 
             const scale = canvas.width / viewWidth;
 
             // Draw Grid
@@ -68,17 +65,18 @@ encoder_js = f"""
                 ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, canvas.height); ctx.stroke();
             }}
 
-            // Calculate pulses
+            // Logic Counter
             let totalPulses = 0;
             if (mode === "X1") totalPulses = Math.floor((angle / 360) * ppr);
             else if (mode === "X2") totalPulses = Math.floor((angle / 360) * ppr * 2);
             else if (mode === "X4") totalPulses = Math.floor((angle / 360) * ppr * 4);
 
-            // Draw Channel A & B
+            // 1. Draw Channel A & B
             ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.strokeStyle = '#00f2ff'; // Channel A (Cyan)
             
+            // Channel A
+            ctx.beginPath();
+            ctx.strokeStyle = '#00f2ff';
             for (let x = 0; x < canvas.width; x++) {{
                 const worldAngle = angle - (canvas.width - x) / scale;
                 const val = (worldAngle % period + period) % period < period / 2 ? 1 : 0;
@@ -87,8 +85,9 @@ encoder_js = f"""
             }}
             ctx.stroke();
 
+            // Channel B
             ctx.beginPath();
-            ctx.strokeStyle = '#ff00ff'; // Channel B (Magenta)
+            ctx.strokeStyle = '#ff00ff';
             for (let x = 0; x < canvas.width; x++) {{
                 const worldAngle = angle - (canvas.width - x) / scale;
                 const val = ((worldAngle + period/4) % period + period) % period < period / 2 ? 1 : 0;
@@ -97,23 +96,47 @@ encoder_js = f"""
             }}
             ctx.stroke();
 
-            // Draw Sampling Markers (Vertical Line)
+            // 2. Draw Dynamic Sampling Markers (Vertical Dashed Lines)
+            // Kita cari posisi 'edge' di jendela tampilan saat ini
             ctx.setLineDash([5, 5]);
-            ctx.strokeStyle = 'white';
-            ctx.lineWidth = 2;
-            const markerX = canvas.width - 20; // Garis di ujung kanan
-            ctx.beginPath(); ctx.moveTo(markerX, 50); ctx.lineTo(markerX, 350); ctx.stroke();
+            ctx.lineWidth = 1;
+            
+            const startAngle = angle - viewWidth;
+            for (let a = Math.floor(startAngle/period)*period; a <= angle; a += (period/4)) {{
+                let x = canvas.width - (angle - a) * scale;
+                if (x < 0) continue;
+
+                let isRisingA = Math.abs(a % period) < 0.01;
+                let isFallingA = Math.abs((a - period/2) % period) < 0.01;
+                let isEdgeB = Math.abs((a - period/4) % period) < 0.01 || Math.abs((a - 3*period/4) % period) < 0.01;
+
+                let drawMarker = false;
+                if (mode === "X1" && isRisingA) drawMarker = true;
+                if (mode === "X2" && (isRisingA || isFallingA)) drawMarker = true;
+                if (mode === "X4") drawMarker = true; // X4 sampling di setiap 1/4 perioda
+
+                if (drawMarker) {{
+                    ctx.strokeStyle = (a === Math.floor(angle/ (period/ (mode==="X4"?4:mode==="X2"?2:1))) * (period/ (mode==="X4"?4:mode==="X2"?2:1))) ? 'white' : 'rgba(255,255,255,0.2)';
+                    ctx.beginPath(); ctx.moveTo(x, 50); ctx.lineTo(x, 350); ctx.stroke();
+                }}
+            }}
             ctx.setLineDash([]);
+
+            // 3. Current Reader Pointer (Garis putih tebal di titik baca sekarang)
+            ctx.strokeStyle = "white";
+            ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.moveTo(canvas.width-2, 50); ctx.lineTo(canvas.width-2, 350); ctx.stroke();
 
             // Text Info
             ctx.fillStyle = "white";
-            ctx.font = "bold 20px sans-serif";
+            ctx.font = "bold 16px sans-serif";
             ctx.fillText("Channel A", 20, 80);
             ctx.fillText("Channel B", 20, 230);
             
             ctx.fillStyle = "#00f2ff";
-            ctx.font = "30px monospace";
+            ctx.font = "bold 28px monospace";
             ctx.fillText(`Counts: ${{totalPulses}}`, 20, 400);
+            ctx.font = "20px monospace";
             ctx.fillText(`Angle: ${{Math.floor(angle % 360)}}°`, 20, 440);
 
             requestAnimationFrame(draw);
@@ -126,7 +149,5 @@ encoder_js = f"""
 
 components.html(encoder_js, height=520)
 
-
-
 st.divider()
-st.caption("© 2026 Newbie Engineer Lab | High-Speed JS Encoder Engine")
+st.caption("© 2026 Newbie Engineer Lab")
