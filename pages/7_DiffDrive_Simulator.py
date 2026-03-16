@@ -1,5 +1,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
+import math as Math
 
 # --- Konfigurasi Page ---
 st.set_page_config(page_title="Kinematics Lab | Newbie Engineer", layout="wide")

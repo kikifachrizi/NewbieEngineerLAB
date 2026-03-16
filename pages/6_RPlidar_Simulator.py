@@ -38,7 +38,7 @@ lidar_js = f"""
         let robot = {{ x: canvas.width/2, y: canvas.height/2, angle: 0, radius: 15 }};
         let obstacles = [
             {{ x: 100, y: 100, w: 80, h: 80 }}, // Rintangan bawaan
-            # {{ x: 500, y: 300, w: 100, h: 20 }}
+            {{ x: 900, y: 400, w: 100, h: 20 }}
         ];
         let keys = {{}};
 
@@ -151,4 +151,4 @@ components.html(lidar_js, height=670)
 
 
 st.divider()
-st.caption("© 2026 Newbie Engineer Lab | Built with HTML5 Canvas & Raycasting Engine")
+st.caption("© 2026 Newbie Engineer Lab")
