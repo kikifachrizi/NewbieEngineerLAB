@@ -14,13 +14,14 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚙️ Hybrid Diff-Drive Kinematics")
-st.caption("Manual Teleop & Autonomous Go-to-Goal Simulator")
+st.title("⚙️ Diff-Drive Kinematics v3.6")
+st.caption("Manual Timer & Autonomous Target - Precision Engineering Mode")
 
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("🤖 Robot Geometry")
     L = st.number_input("Wheel Separation (L) [m]", value=0.30, step=0.01)
+    R = st.number_input("Wheel Radius (R) [m]", value=0.05, step=0.005, format="%.3f")
     
     st.divider()
     st.header("🕹️ Operation Mode")
@@ -30,7 +31,8 @@ with st.sidebar:
         st.subheader("Manual Controls")
         v_lin = st.slider("Linear Velocity (v)", -1.0, 1.0, 0.4)
         w_ang = st.slider("Angular Velocity (ω)", -2.0, 2.0, 0.5)
-        # Dummy values for JS compatibility
+        sim_limit = st.slider("Movement Duration (s)", 1.0, 20.0, 5.0, step=0.5)
+        # Placeholder for JS
         tx, ty, tt, kv, kw = 0, 0, 0, 0, 0
     else:
         st.subheader("Target & Gains")
@@ -39,8 +41,8 @@ with st.sidebar:
         tt = st.slider("Target Heading (°)", -180, 180, 0)
         kv = st.slider("Linear Gain (Kp-v)", 0.1, 2.0, 0.8)
         kw = st.slider("Angular Gain (Kp-w)", 0.5, 5.0, 2.5)
-        # Dummy values for JS compatibility
-        v_lin, w_ang = 0, 0
+        # Placeholder for JS
+        v_lin, w_ang, sim_limit = 0, 0, 0
 
     st.divider()
     col1, col2 = st.columns(2)
@@ -52,15 +54,25 @@ with st.sidebar:
             st.session_state.active = False
             st.rerun()
 
-# --- Metrics ---
+# --- Metrics (Inverse Kinematics) ---
+# Kita tampilkan kecepatan sudut roda (rad/s) yang dibutuhkan
+if op_mode == "Manual Command":
+    vr_rads = (v_lin + (w_ang * L / 2)) / R
+    vl_rads = (v_lin - (w_ang * L / 2)) / R
+else:
+    vr_rads, vl_rads = 0, 0 # Dinamis di JS kalau Auto
+
 c1, c2, c3 = st.columns(3)
 c1.metric("Mode", op_mode)
-c2.metric("Control Status", "RUNNING" if st.session_state.get('active') else "STANDBY")
-c3.metric("L/2 Offset", f"{L/2:.3f} m")
+if op_mode == "Manual Command":
+    c2.metric("Wheel Speed (R/L)", f"{vr_rads:.1f} | {vl_rads:.1f} rad/s")
+else:
+    c2.metric("Status", "GO-TO-GOAL")
+c3.metric("Wheel Circum", f"{2 * np.pi * R:.3f} m")
 
 is_active = "true" if st.session_state.get('active', False) else "false"
 
-# --- JAVASCRIPT KINEMATIC ENGINE (HYBRID) ---
+# --- JAVASCRIPT KINEMATIC ENGINE ---
 kinematic_js = f"""
 <!DOCTYPE html>
 <html>
@@ -72,23 +84,20 @@ kinematic_js = f"""
         canvas.width = window.innerWidth;
         canvas.height = 600;
 
-        // Configuration
+        // Config
         const mode = "{op_mode}";
-        const L = {L}, isActive = {is_active};
+        const L = {L}, R = {R}, isActive = {is_active};
         
         // Manual Params
-        const vManual = {v_lin}, wManual = {w_ang};
+        const vManual = {v_lin}, wManual = {w_ang}, simLimit = {sim_limit};
         
         // Auto Params
-        const targetX = {tx}, targetY = {ty}, kv = {kv}, kw = {kw};
-        const targetTh = {np.radians(tt)};
+        const targetX = {tx}, targetY = {ty}, kv = {kv}, kw = {kw}, targetTh = {np.radians(tt)};
 
         // State
-        let x = 0, y = 0, theta = 0;
-        let v_out = 0, w_out = 0;
-        let path = [];
-        let lastTime = 0;
-        let reached = false;
+        let x = 0, y = 0, theta = 0, timeElapsed = 0;
+        let v_out = 0, w_out = 0, path = [];
+        let lastTime = 0, reached = false;
 
         const scale = 80; 
         const offsetX = canvas.width / 2;
@@ -104,7 +113,7 @@ kinematic_js = f"""
             const px = offsetX + rx * scale;
             const py = offsetY - ry * scale;
 
-            // Path
+            // Trace
             ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 2;
             ctx.beginPath();
             path.forEach((p, i) => {{
@@ -113,7 +122,7 @@ kinematic_js = f"""
             }});
             ctx.stroke();
 
-            // Target Ghost (Only in Auto Mode)
+            // Target (Auto only)
             if(mode === "Autonomous Go-to-Goal") {{
                 ctx.save();
                 ctx.translate(offsetX + targetX * scale, offsetY - targetY * scale);
@@ -127,9 +136,8 @@ kinematic_js = f"""
             ctx.save();
             ctx.translate(px, py);
             ctx.rotate(-rth);
-            ctx.fillStyle = "rgba(0, 242, 255, 0.2)"; ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 3;
+            ctx.fillStyle = "rgba(0, 242, 255, 0.1)"; ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 3;
             ctx.beginPath(); ctx.arc(0, 0, (L/2)*scale, 0, Math.PI*2); ctx.fill(); ctx.stroke();
-            // Heading
             ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 4;
             ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(35, 0); ctx.stroke();
             ctx.restore();
@@ -142,12 +150,15 @@ kinematic_js = f"""
 
             if (isActive) {{
                 if (mode === "Manual Command") {{
-                    v_out = vManual;
-                    w_out = wManual;
+                    if (timeElapsed < simLimit) {{
+                        v_out = vManual;
+                        w_out = wManual;
+                        timeElapsed += dt;
+                    }} else {{
+                        v_out = 0; w_out = 0; reached = true;
+                    }}
                 }} else {{
-                    // Autonomous Logic
-                    let dx = targetX - x;
-                    let dy = targetY - y;
+                    let dx = targetX - x; let dy = targetY - y;
                     let dist = Math.sqrt(dx*dx + dy*dy);
                     let angleToTarget = Math.atan2(dy, dx);
                     let alpha = angleToTarget - theta;
@@ -157,8 +168,8 @@ kinematic_js = f"""
                     if (dist > 0.05) {{
                         v_out = kv * dist;
                         w_out = kw * alpha;
-                        v_out = Math.min(v_out, 1.0);
-                        w_out = Math.max(-2.5, Math.min(w_out, 2.5));
+                        v_out = Math.min(v_out, 1.2);
+                        w_out = Math.max(-3, Math.min(w_out, 3));
                     }} else {{
                         v_out = 0; w_out = 0; reached = true;
                     }}
@@ -175,11 +186,18 @@ kinematic_js = f"""
             drawRobot(x, y, theta);
             
             // HUD
-            ctx.fillStyle = "white"; ctx.font = "13px monospace";
-            ctx.fillText("V: " + v_out.toFixed(2) + " m/s", 20, 30);
-            ctx.fillText("W: " + w_out.toFixed(2) + " rad/s", 20, 50);
-            ctx.fillText("Pose: [" + x.toFixed(2) + ", " + y.toFixed(2) + "]", 20, 70);
-            if(reached && mode.includes("Auto")) {{ ctx.fillStyle = "#00ff00"; ctx.fillText("GOAL REACHED!", 20, 100); }}
+            ctx.fillStyle = "white"; ctx.font = "14px monospace";
+            ctx.fillText("Time: " + (mode.includes("Manual") ? timeElapsed.toFixed(1) + " / " + simLimit + "s" : "Live"), 20, 30);
+            ctx.fillText("V: " + v_out.toFixed(2) + " m/s", 20, 55);
+            ctx.fillText("W: " + w_out.toFixed(2) + " rad/s", 20, 75);
+            
+            // Calc Wheel Speed Live for UI
+            let vr = (v_out + (w_out * L / 2)) / R;
+            let vl = (v_out - (w_out * L / 2)) / R;
+            ctx.fillText("ω_R: " + vr.toFixed(1) + " rad/s", 20, 105);
+            ctx.fillText("ω_L: " + vl.toFixed(1) + " rad/s", 20, 125);
+
+            if(reached) {{ ctx.fillStyle = "#00ff00"; ctx.fillText("STATUS: FINISHED", 20, 155); }}
 
             requestAnimationFrame(update);
         }}
@@ -195,9 +213,9 @@ components.html(kinematic_js, height=620)
 
 st.divider()
 st.info("""
-**Hybrid Mode v3.5:**
-- **Manual Mode**: Robot bergerak murni berdasarkan input $v$ dan $\omega$ lo secara terus-menerus.
-- **Auto Mode**: Robot menggunakan *control law* untuk navigasi menuju titik target. 
-- Klik **DEPLOY** untuk memulai pergerakan dan **RESET** untuk kembali ke titik nol.
+**Update v3.6:**
+- **Wheel Radius ($R$):** Mempengaruhi kalkulasi kecepatan sudut roda ($\omega_R, \omega_L$).
+- **Manual Timer:** Robot akan berhenti otomatis setelah durasi yang ditentukan habis.
+- **Live HUD:** Memperlihatkan kecepatan roda secara real-time saat robot bergerak.
 """)
 st.caption("© 2026 Newbie Engineer Lab")
