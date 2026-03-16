@@ -14,7 +14,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚙️ Diff-Drive Kinematics v3.6")
+st.title("⚙️ Diff-Drive Kinematics")
 st.caption("Manual Timer & Autonomous Target - Precision Engineering Mode")
 
 # --- SIDEBAR ---
