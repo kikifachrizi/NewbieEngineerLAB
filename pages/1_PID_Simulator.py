@@ -1,7 +1,7 @@
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
-import time
+import json
 
 # --- Konfigurasi Page ---
 st.set_page_config(page_title="PID Pro Dashboard", layout="wide")
@@ -32,12 +32,12 @@ if 't' not in st.session_state:
 
 # --- Header ---
 st.title("📟 Advanced PID Sim")
-st.caption("Mastering Control System")
+st.caption("Mastering Control System - Optimized with Plotly")
 
 # --- Sidebar ---
 with st.sidebar:
     st.header("🎛️ Tuning Parameters")
-    kp = st.slider("Proportional (Kp)", 0.0, 50.0, 5.0) # Range dinaikkan agar lebih responsif
+    kp = st.slider("Proportional (Kp)", 0.0, 50.0, 5.0)
     ki = st.slider("Integral (Ki)", 0.0, 20.0, 1.0)
     kd = st.slider("Derivative (Kd)", 0.0, 10.0, 0.5)
     
@@ -57,7 +57,7 @@ with st.sidebar:
     if mode == "Manual Setpoint":
         st.session_state.target = st.number_input("Target Value", value=100.0)
     else:
-        osc_amp = st.slider("Oscillation Amplitude", -200, 200, 100) # Dukung negatif
+        osc_amp = st.slider("Oscillation Amplitude", -200, 200, 100)
         osc_freq = st.slider("Freq / Period (s)", 2.0, 10.0, 5.0)
         if st.session_state.osc_timer == 0:
             st.session_state.target = float(osc_amp)
@@ -85,7 +85,7 @@ def calculate_metrics(time_arr, res_arr, sp):
     err = sp - res_arr[-1]
     return pk, rt, st_t, err
 
-# --- Main Simulation ---
+# --- Main Simulation (Fragmented for Speed) ---
 @st.fragment(run_every=0.1)
 def run_tuner_dashboard():
     dt = 0.1
@@ -93,16 +93,12 @@ def run_tuner_dashboard():
     if mode == "Oscillation Mode":
         st.session_state.osc_timer += dt
         if st.session_state.osc_timer >= osc_freq:
-            # Toggle antara Amplitude dan Negatif Amplitude (atau 0)
             st.session_state.target = float(osc_amp) if st.session_state.target <= 0 else -float(osc_amp)
             st.session_state.osc_timer = 0
     
     current_sp = st.session_state.target
-
-    # PID Logic
     error = current_sp - st.session_state.curr_v
     
-    # Anti-Windup
     st.session_state.err_sum += error * dt
     if use_anti_windup:
         limit_i = max_out / (ki if ki > 0 else 1)
@@ -110,23 +106,18 @@ def run_tuner_dashboard():
     
     deriv = (error - st.session_state.l_err) / dt
     raw_out = (kp * error) + (ki * st.session_state.err_sum) + (kd * deriv)
-    
-    # FIX PROBLEM 1: Output sekarang bisa negatif (-255 sampai 255)
     pwm = np.clip(raw_out, -max_out, max_out)
     
-    # Plant (Dukung arah negatif)
     noise = np.random.normal(0, noise_amp)
     accel = (pwm * 0.6) - (st.session_state.curr_v * 0.3) 
     st.session_state.curr_v += (accel * dt) + noise
     st.session_state.l_err = error
     
-    # Filtering
     if use_filter:
         f_val = (alpha * st.session_state.y_f[-1]) + ((1 - alpha) * st.session_state.curr_v)
     else:
         f_val = st.session_state.curr_v
     
-    # History Update
     st.session_state.t.append(st.session_state.t[-1] + dt)
     st.session_state.y.append(st.session_state.curr_v)
     st.session_state.y_f.append(f_val)
@@ -138,7 +129,6 @@ def run_tuner_dashboard():
 
     pk, rt, st_t, err = calculate_metrics(st.session_state.t, st.session_state.y_f, current_sp)
 
-    # UI Metrics
     m_col1, m_col2, m_col3, m_col4, m_col5, m_col6 = st.columns(6)
     m_col1.metric("Current", f"{f_val:.1f} V")
     m_col2.metric("Setpoint", f"{current_sp:.1f} V")
@@ -147,28 +137,37 @@ def run_tuner_dashboard():
     m_col5.metric("Settling", f"{st_t:.2f} s")
     m_col6.metric("Error", f"{err:.1f} %")
 
-    # --- Plotting ---
+    # --- Plotly Visualization (No Matplotlib) ---
     fig = go.Figure()
+    
     if use_filter:
-        fig.add_trace(go.Scatter(x=st.session_state.t, y=st.session_state.y, name="Raw Signal", 
-                                 line=dict(color='rgba(0,242,255,0.15)', width=1)))
+        fig.add_trace(go.Scatter(
+            x=st.session_state.t, y=st.session_state.y, 
+            name="Raw Signal", 
+            line=dict(color='rgba(0,242,255,0.15)', width=1)
+        ))
     
-    # Sinyal Output
-    fig.add_trace(go.Scatter(x=st.session_state.t, y=st.session_state.y_f, name="System Output", 
-                             line=dict(color='#00f2ff', width=3)))
+    fig.add_trace(go.Scatter(
+        x=st.session_state.t, y=st.session_state.y_f, 
+        name="System Output", 
+        line=dict(color='#00f2ff', width=3)
+    ))
     
-    # FIX PROBLEM 2: Grafik Setpoint dibuat STEP (hv)
-    fig.add_trace(go.Scatter(x=st.session_state.t, y=[current_sp]*len(st.session_state.t), name="Target", 
-                             line=dict(color='red', dash='dot', width=2),
-                             line_shape='hv')) # hv = horizontal-vertical (step chart)
+    fig.add_trace(go.Scatter(
+        x=st.session_state.t, y=[current_sp]*len(st.session_state.t), 
+        name="Target", 
+        line=dict(color='red', dash='dot', width=2),
+        line_shape='hv'
+    ))
     
     fig.update_layout(
-        template="plotly_dark", height=500,
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(title="Time (s)", showgrid=False),
-        # Range Y otomatis menyesuaikan setpoint negatif
-        yaxis=dict(title="Voltage (V)", range=[min(st.session_state.y_f)-50, max(st.session_state.y_f)+50]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        template="plotly_dark", height=450,
+        margin=dict(l=20, r=20, t=20, b=20),
+        xaxis=dict(title="Time (s)", showgrid=False, zeroline=False),
+        yaxis=dict(title="Voltage (V)", showgrid=True, gridcolor="#2e323d"),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        plot_bgcolor="rgba(0,0,0,0)",
+        paper_bgcolor="rgba(0,0,0,0)"
     )
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
 
