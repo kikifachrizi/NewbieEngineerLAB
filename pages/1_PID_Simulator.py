@@ -12,7 +12,7 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📟 Advanced PID Simulator v3.5")
+st.title("📟 Advanced PID Simulator")
 st.caption("Full Control Features: Low Pass Filter, Saturation, & Dynamic Scaling")
 
 # --- Sidebar (Full Parameters) ---
