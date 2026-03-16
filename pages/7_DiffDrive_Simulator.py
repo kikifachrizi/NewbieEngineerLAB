@@ -12,8 +12,8 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("⚙️ Differential Drive Kinematics")
-st.caption("High-Speed Kinetic Engine - Real-Time Path Tracing")
+st.title("⚙️ Differential Drive Kinematics v3.2")
+st.caption("High-Speed Kinetic Engine - Manual Target & Auto-Path Enabled")
 
 # --- SIDEBAR ---
 with st.sidebar:
@@ -22,22 +22,34 @@ with st.sidebar:
     R = st.number_input("Wheel Radius (R) [m]", value=0.05, step=0.01)
     
     st.divider()
-    st.header("🕹️ Real-Time Control")
+    st.header("🕹️ Real-Time Velocity")
     v_lin = st.slider("Linear Velocity (v) [m/s]", -1.0, 1.0, 0.4)
     w_ang = st.slider("Angular Velocity (ω) [rad/s]", -2.0, 2.0, 0.5)
     
     st.divider()
-    if st.button("🔄 Reset Animation", use_container_width=True):
+    st.header("📍 Target Position")
+    tx = st.number_input("Target X", value=1.5)
+    ty = st.number_input("Target Y", value=1.5)
+    t_theta = st.slider("Target Heading (°)", -180, 180, 45)
+    
+    st.divider()
+    if st.button("🚀 Deploy to Target", use_container_width=True):
+        st.session_state.deploy_trigger = True
+        st.rerun()
+    if st.button("🔄 Reset to Origin", use_container_width=True):
+        st.session_state.deploy_trigger = False
         st.rerun()
 
-# --- Inverse Kinematics Calculation ---
+# --- Metrics ---
 vr = (v_lin + (w_ang * L / 2)) / R
 vl = (v_lin - (w_ang * L / 2)) / R
-
 c1, c2, c3 = st.columns(3)
 c1.metric("Right Wheel", f"{vr:.2f} rad/s")
 c2.metric("Left Wheel", f"{vl:.2f} rad/s")
-c3.metric("L/2 Radius", f"{L/2:.3f} m")
+c3.metric("Target", f"({tx}, {ty})")
+
+# Logic trigger
+is_deploy = "true" if st.session_state.get('deploy_trigger', False) else "false"
 
 # --- JAVASCRIPT KINEMATIC ENGINE ---
 kinematic_js = f"""
@@ -51,29 +63,44 @@ kinematic_js = f"""
         canvas.width = window.innerWidth;
         canvas.height = 600;
 
-        // Params from Streamlit
-        const v = {v_lin};
-        const w = {w_ang};
-        const L = {L};
+        const v = {v_lin}, w = {w_ang}, L = {L};
+        const targetX = {tx}, targetY = {ty}, targetTh = {t_theta * (Math.PI/180)};
+        const isDeploy = {is_deploy};
         
-        // Robot State
         let x = 0, y = 0, theta = 0;
         let path = [];
         let lastTime = 0;
-
-        // Koordinat Konversi (Metre to Pixel)
-        const scale = 100; // 1 meter = 100 pixels
+        const scale = 80; // Scale 1m = 80px
         const offsetX = canvas.width / 2;
         const offsetY = canvas.height / 2;
 
+        function drawGrid() {{
+            ctx.strokeStyle = "#1e2130"; ctx.lineWidth = 1;
+            for(let i=0; i<canvas.width; i+=scale/2) {{ ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke(); }}
+            for(let i=0; i<canvas.height; i+=scale/2) {{ ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke(); }}
+        }}
+
+        function drawGhost(gx, gy, gth) {{
+            const px = offsetX + gx * scale;
+            const py = offsetY - gy * scale;
+            ctx.save();
+            ctx.translate(px, py);
+            ctx.rotate(-gth);
+            ctx.strokeStyle = "rgba(255, 68, 68, 0.4)";
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath(); ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2); ctx.stroke();
+            // Arrow
+            ctx.beginPath(); ctx.moveTo(0,0); ctx.lineTo(20,0); ctx.stroke();
+            ctx.restore();
+            ctx.setLineDash([]);
+        }}
+
         function drawRobot(rx, ry, rth) {{
             const px = offsetX + rx * scale;
-            const py = offsetY - ry * scale; // Y inverted in canvas
+            const py = offsetY - ry * scale;
 
-            // 1. Draw Path
-            ctx.strokeStyle = "#00f2ff";
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
+            // Draw Path Trace
+            ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 2;
             ctx.beginPath();
             path.forEach((p, i) => {{
                 let p_px = offsetX + p.x * scale;
@@ -81,35 +108,17 @@ kinematic_js = f"""
                 if(i===0) ctx.moveTo(p_px, p_py); else ctx.lineTo(p_px, p_py);
             }});
             ctx.stroke();
-            ctx.setLineDash([]);
 
-            // 2. Draw Robot Body
+            // Draw Robot
             ctx.save();
             ctx.translate(px, py);
-            ctx.rotate(-rth); // Rotate canvas (negative because Y is inverted)
-            
-            // Body Circle
+            ctx.rotate(-rth);
             ctx.fillStyle = "rgba(0, 242, 255, 0.2)";
-            ctx.strokeStyle = "white";
-            ctx.lineWidth = 2;
-            ctx.beginPath();
-            ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-
-            // Heading Arrow
-            ctx.strokeStyle = "#ff4444";
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.moveTo(0, 0);
-            ctx.lineTo(25, 0); // Pointing to the right (local X)
-            ctx.stroke();
-            
-            // Arrow Head
-            ctx.fillStyle = "#ff4444";
-            ctx.beginPath();
-            ctx.moveTo(25, -5); ctx.lineTo(35, 0); ctx.lineTo(25, 5); ctx.fill();
-
+            ctx.strokeStyle = "#00f2ff"; ctx.lineWidth = 3;
+            ctx.beginPath(); ctx.arc(0, 0, (L/2) * scale, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+            // Heading
+            ctx.strokeStyle = "#ff4444"; ctx.lineWidth = 4;
+            ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(30, 0); ctx.stroke();
             ctx.restore();
         }}
 
@@ -118,32 +127,24 @@ kinematic_js = f"""
             if(!lastTime) {{ lastTime = timestamp; requestAnimationFrame(update); return; }}
             lastTime = timestamp;
 
-            // --- KINEMATIC MODEL ---
-            x += v * Math.cos(theta) * dt;
-            y += v * Math.sin(theta) * dt;
-            theta += w * dt;
+            // Update Logic
+            if (isDeploy) {{
+                // Jika Deploy, robot bergerak otomatis
+                x += v * Math.cos(theta) * dt;
+                y += v * Math.sin(theta) * dt;
+                theta += w * dt;
+                path.push({{x: x, y: y}});
+            }} else {{
+                // Jika tidak deploy, robot snap ke origin (atau tetap di 0)
+                x = 0; y = 0; theta = 0; path = [];
+            }}
 
-            // Simpan jejak
-            path.push({{x: x, y: y}});
-            if(path.length > 1000) path.shift();
-
-            // Draw everything
             ctx.clearRect(0, 0, canvas.width, canvas.height);
-            
-            // Draw Grid
-            ctx.strokeStyle = "#1e2130";
-            ctx.lineWidth = 1;
-            for(let i=0; i<canvas.width; i+=50) {{
-                ctx.beginPath(); ctx.moveTo(i,0); ctx.lineTo(i,canvas.height); ctx.stroke();
-            }}
-            for(let i=0; i<canvas.height; i+=50) {{
-                ctx.beginPath(); ctx.moveTo(0,i); ctx.lineTo(canvas.width,i); ctx.stroke();
-            }}
-
+            drawGrid();
+            drawGhost(targetX, targetY, targetTh);
             drawRobot(x, y, theta);
             requestAnimationFrame(update);
         }}
-
         requestAnimationFrame(update);
     </script>
 </body>
@@ -156,9 +157,9 @@ components.html(kinematic_js, height=620)
 
 st.divider()
 st.info("""
-**User Guide:**
-- Robot akan mulai berjalan secara otomatis dari titik **(0,0)**.
-- Ubah **v** (Linear) dan **ω** (Angular) di sidebar untuk melihat perubahan arah robot secara langsung.
-- Animasi ini berjalan di sisi browser (Client-side) untuk menjamin pergerakan **60 FPS** yang mulus.
+**Karakteristik v3.2:**
+- **Ghost Target:** Bayangan merah menunjukkan posisi target $(X, Y, \theta)$ yang lo atur di sidebar.
+- **🚀 Deploy to Target:** Robot akan mulai bergerak dari origin mengikuti input kecepatan $v$ dan $\omega$ lo.
+- **🔄 Reset:** Mengembalikan robot ke titik $(0,0)$ dan menghapus jejak path.
 """)
-st.caption("© 2026 Newbie Engineer Lab | Specialized for AMR TIFA R&D")
+st.caption("© 2026 Newbie Engineer Lab")

@@ -37,7 +37,7 @@ lidar_js = f"""
 
         let robot = {{ x: canvas.width/2, y: canvas.height/2, angle: 0, radius: 15 }};
         let obstacles = [
-            # {{ x: 100, y: 100, w: 80, h: 80 }}, // Rintangan bawaan
+            {{ x: 100, y: 100, w: 80, h: 80 }}, // Rintangan bawaan
             # {{ x: 500, y: 300, w: 100, h: 20 }}
         ];
         let keys = {{}};

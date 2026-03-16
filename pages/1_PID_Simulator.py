@@ -12,10 +12,10 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-st.title("📟 Advanced PID Simulator v3.3")
-st.caption("Precision Control System - Dynamic Time-Scale Engine")
+st.title("📟 Advanced PID Simulator v3.5")
+st.caption("Full Control Features: Low Pass Filter, Saturation, & Dynamic Scaling")
 
-# --- Sidebar ---
+# --- Sidebar (Full Parameters) ---
 with st.sidebar:
     st.header("🎛️ Tuning Parameters")
     kp = st.slider("Proportional (Kp)", 0.0, 50.0, 10.0)
@@ -23,26 +23,24 @@ with st.sidebar:
     kd = st.slider("Derivative (Kd)", 0.0, 10.0, 0.5)
     
     st.divider()
+    st.header("🛡️ Signal Conditioning")
+    use_filter = st.toggle("Enable Low Pass Filter", value=True)
+    alpha = st.slider("Filter Alpha (Smoothing)", 0.0, 0.95, 0.3, help="Semakin tinggi, sinyal semakin halus tapi respon melambat.")
+    
+    use_saturation = st.toggle("Enable Output Saturation", value=True)
+    max_out = st.slider("Max Output (PWM/Volt)", 50, 255, 255)
+
+    st.divider()
     st.header("⏱️ Time Control")
-    # Fitur Baru: Mengatur kecepatan simulasi
-    sim_speed = st.select_slider(
-        "Simulation Speed",
-        options=["0.25x", "0.5x", "1x", "2x", "4x"],
-        value="1x",
-        help="0.25x untuk analisa slow-motion, 4x untuk testing stabilitas cepat."
-    )
-    # Konversi string ke multiplier numerik
+    sim_speed = st.select_slider("Simulation Speed", options=["0.25x", "0.5x", "1x", "2x", "4x"], value="1x")
     speed_map = {"0.25x": 0.004, "0.5x": 0.008, "1x": 0.016, "2x": 0.032, "4x": 0.064}
     dt_val = speed_map[sim_speed]
 
     st.divider()
-    st.header("🔄 Environment")
+    st.header("🔄 Mode & Environment")
     mode = st.radio("System Mode", ["Manual Setpoint", "Oscillation Mode"])
     target_val = st.number_input("Target Value", value=100.0)
     noise_amp = st.slider("Sensor Noise", 0.0, 10.0, 1.5)
-    
-    st.divider()
-    max_out = st.slider("Output Saturation", 50, 255, 255)
 
 # --- JAVASCRIPT PID ENGINE ---
 pid_js = f"""
@@ -50,9 +48,9 @@ pid_js = f"""
 <html>
 <body style="margin: 0; background-color: #0b0e14; overflow: hidden; font-family: sans-serif; color: white;">
     <div id="metrics" style="position: absolute; top: 15px; right: 25px; display: flex; gap: 20px; background: rgba(20, 23, 33, 0.9); padding: 12px 25px; border-radius: 12px; border: 1px solid #00f2ff33; z-index: 100; box-shadow: 0 0 20px rgba(0, 242, 255, 0.1);">
-        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Peak</div><div id="m_peak" style="color: #00f2ff; font-weight: bold; font-size: 20px; font-family: monospace;">0.0</div></div>
-        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Rise Time</div><div id="m_rise" style="color: #00f2ff; font-weight: bold; font-size: 20px; font-family: monospace;">0.0s</div></div>
-        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase; letter-spacing: 1px;">Settling</div><div id="m_settle" style="color: #00f2ff; font-weight: bold; font-size: 20px; font-family: monospace;">0.0s</div></div>
+        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase;">Peak</div><div id="m_peak" style="color: #00f2ff; font-weight: bold; font-size: 18px; font-family: monospace;">0.0</div></div>
+        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase;">Rise Time</div><div id="m_rise" style="color: #00f2ff; font-weight: bold; font-size: 18px; font-family: monospace;">0.0s</div></div>
+        <div style="text-align: center;"><div style="color: #9ea4b0; font-size: 11px; text-transform: uppercase;">Settling</div><div id="m_settle" style="color: #00f2ff; font-weight: bold; font-size: 18px; font-family: monospace;">0.0s</div></div>
     </div>
 
     <canvas id="pidCanvas"></canvas>
@@ -63,12 +61,16 @@ pid_js = f"""
         canvas.width = window.innerWidth;
         canvas.height = 550;
 
+        // Params from Streamlit
         const Kp = {kp}, Ki = {ki}, Kd = {kd};
-        const noiseAmp = {noise_amp}, maxOut = {max_out}, mode = "{mode}";
-        const dt = {dt_val}; // Kecepatan simulasi dari Streamlit
+        const noiseAmp = {noise_amp}, mode = "{mode}";
+        const useFilter = {str(use_filter).lower()}, alpha = {alpha};
+        const useSat = {str(use_saturation).lower()}, maxOut = {max_out};
+        const dt = {dt_val};
         let target = {target_val};
 
-        let currV = 0, errSum = 0, lastErr = 0;
+        // States
+        let currV = 0, filteredV = 0, errSum = 0, lastErr = 0;
         let history = [], time = 0, oscTimer = 0;
         let peakVal = 0, riseTime = 0, settlingTime = 0;
 
@@ -84,23 +86,41 @@ pid_js = f"""
 
             const error = target - currV;
             errSum += error * dt;
-            const limitI = maxOut / (Ki > 0 ? Ki : 1);
-            errSum = Math.max(-limitI, Math.min(limitI, errSum));
+            
+            // Anti-Windup (Hanya aktif jika Saturasi aktif)
+            if (useSat) {{
+                const limitI = maxOut / (Ki > 0 ? Ki : 1);
+                errSum = Math.max(-limitI, Math.min(limitI, errSum));
+            }}
 
             const deriv = (error - lastErr) / dt;
-            const output = (Kp * error) + (Ki * errSum) + (Kd * deriv);
-            const pwm = Math.max(-maxOut, Math.min(maxOut, output));
+            let output = (Kp * error) + (Ki * errSum) + (Kd * deriv);
+            
+            // Saturation Logic
+            if (useSat) {{
+                output = Math.max(-maxOut, Math.min(maxOut, output));
+            }}
+            const pwm = output;
 
+            // Plant Physics
             const noise = (Math.random() - 0.5) * noiseAmp;
             const accel = (pwm * 0.8) - (currV * 0.4); 
             currV += (accel * dt) + noise;
             lastErr = error;
 
-            if(Math.abs(currV) > Math.abs(peakVal)) peakVal = currV;
-            if(!riseTime && Math.abs(currV) >= Math.abs(target * 0.9)) riseTime = time;
-            if(Math.abs(error) > Math.abs(target * 0.05)) settlingTime = time;
+            // Low Pass Filter Logic
+            if (useFilter) {{
+                filteredV = (alpha * filteredV) + ((1 - alpha) * currV);
+            }} else {{
+                filteredV = currV;
+            }}
 
-            history.push({{t: time, v: currV, sp: target}});
+            // Metrics Calculation (Based on Filtered Signal)
+            if(Math.abs(filteredV) > Math.abs(peakVal)) peakVal = filteredV;
+            if(!riseTime && Math.abs(filteredV) >= Math.abs(target * 0.9)) riseTime = time;
+            if(Math.abs(target - filteredV) > Math.abs(target * 0.05)) settlingTime = time;
+
+            history.push({{t: time, raw: currV, f: filteredV, sp: target}});
             if (history.length > 500) history.shift();
             time += dt;
 
@@ -115,7 +135,7 @@ pid_js = f"""
             const chartW = canvas.width - 120;
             const chartH = canvas.height - 140;
 
-            const allValues = history.map(d => d.v).concat([target]);
+            const allValues = history.map(d => d.f).concat([target]);
             const minVal = Math.min(...allValues);
             const maxVal = Math.max(...allValues);
             const range = Math.max(Math.abs(maxVal - minVal), 20);
@@ -127,7 +147,7 @@ pid_js = f"""
                 return (padding + chartH) - ((val - yMin) / yRange) * chartH;
             }}
 
-            // Grid
+            // Grid Lines
             ctx.strokeStyle = '#1e2130'; ctx.lineWidth = 1;
             ctx.font = "12px monospace"; ctx.fillStyle = "#4a4f5d";
             for(let i=0; i<=5; i++) {{
@@ -137,8 +157,8 @@ pid_js = f"""
                 ctx.fillText(val.toFixed(0), padding - 45, y + 4);
             }}
 
-            // Target Line
-            ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.setLineDash([10, 10]);
+            // Setpoint (Red)
+            ctx.strokeStyle = '#ff4444'; ctx.lineWidth = 2; ctx.setLineDash([8, 8]);
             ctx.beginPath();
             history.forEach((d, i) => {{
                 let x = padding + (i / 500) * chartW;
@@ -147,22 +167,34 @@ pid_js = f"""
             }});
             ctx.stroke(); ctx.setLineDash([]);
 
-            // Output Line
+            // Raw Signal (Faint Cyan) - Hanya tampil jika filter aktif
+            if (useFilter) {{
+                ctx.strokeStyle = 'rgba(0, 242, 255, 0.1)'; ctx.lineWidth = 1;
+                ctx.beginPath();
+                history.forEach((d, i) => {{
+                    let x = padding + (i / 500) * chartW;
+                    let y = getY(d.raw);
+                    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                }});
+                ctx.stroke();
+            }}
+
+            // Filtered Output (Solid Neon Cyan)
             ctx.strokeStyle = '#00f2ff'; ctx.lineWidth = 4;
             ctx.shadowBlur = 15; ctx.shadowColor = '#00f2ff';
             ctx.beginPath();
             history.forEach((d, i) => {{
                 let x = padding + (i / 500) * chartW;
-                let y = getY(d.v);
+                let y = getY(d.f);
                 if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
             }});
             ctx.stroke(); ctx.shadowBlur = 0;
 
-            // Labels
-            ctx.fillStyle = "white"; ctx.font = "bold 15px sans-serif";
-            ctx.fillText("LIVE TELEMETRY (" + "{sim_speed}" + ")", padding, 35);
+            // Legend & Status
+            ctx.fillStyle = "white"; ctx.font = "bold 14px sans-serif";
+            ctx.fillText("PID TELEMETRY | " + (useFilter ? "FILTER ON" : "FILTER OFF"), padding, 35);
             ctx.fillStyle = "#ff4444"; ctx.fillText("● Target", padding + 220, 35);
-            ctx.fillStyle = "#00f2ff"; ctx.fillText("● Output", padding + 300, 35);
+            ctx.fillStyle = "#00f2ff"; ctx.fillText("● System Output", padding + 300, 35);
         }}
 
         function loop() {{ updatePID(); draw(); requestAnimationFrame(loop); }}
@@ -174,10 +206,12 @@ pid_js = f"""
 
 components.html(pid_js, height=580)
 
+
+
 st.divider()
-st.info(f"""
-**Info Simulasi:**
-- **Kecepatan:** Saat ini berjalan pada **{sim_speed}**. 
-- **Analisis:** Gunakan **0.25x** untuk melihat osilasi mikro atau **4x** untuk melihat respon sistem terhadap gangguan (*noise*) dalam jangka panjang secara cepat.
+st.info("""
+**Kombinasi Fitur Baru:**
+- **Low Pass Filter:** Menghilangkan *jitter* akibat sensor noise. Cobalah naikkan noise dan lihat perbedaan antara sinyal tipis (raw) dan sinyal tebal (filtered).
+- **Anti-Windup:** Mencegah akumulasi error integral saat output sudah mencapai batas maksimal (Saturation).
 """)
 st.caption("© 2026 Newbie Engineer Lab")
